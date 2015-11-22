@@ -53,3 +53,4 @@ class RDD:
 
         self.master.map(self.map_func, [rdd.id for rdd in self.previous_RDDs], self.id)
         self.is_evaluated = True
+        return self
