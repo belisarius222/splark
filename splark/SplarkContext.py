@@ -18,3 +18,9 @@ class SplarkContext:
         rdd = RDD(self.master)
         self.master.set_data(rdd.id, iterable)
         return rdd
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *traceback_info):
+        self.master.kill_workers()
