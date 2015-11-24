@@ -8,6 +8,8 @@ from splark.misc import fromCP, toCP
 
 class InnerWorker(Process):
     def __init__(self, uri, stdout=sys.stdout, stderr=sys.stderr, **kwargs):
+        self.stdout = stdout
+        self.stderr = stderr
         Process.__init__(self, **kwargs)
 
         self._uri = uri
@@ -18,12 +20,15 @@ class InnerWorker(Process):
         self._skt.connect(self._uri)
 
     def run(self):
+        sys.stdout = self.stdout
+        sys.stderr = self.stderr
+
         self.setup()
 
         while True:
             parts = self._skt.recv_multipart()
 
-            # Uncloudpickel everything
+            # Un-cloudpickle everything
             # f, ArgList1, ArgList2, ArgList3 . . .
             f, *args = [fromCP(part) for part in parts]
 

@@ -1,7 +1,7 @@
 import sys
 import time
 from uuid import uuid4
-from multiprocessing import Process
+from multiprocessing import Process, Pipe
 
 import zmq
 
@@ -25,7 +25,11 @@ class Worker(Process):
         self.data = {}
 
     def setupWorker(self):
-        self.inner_worker = InnerWorker(self.ipcURI, daemon=True)
+        self.inner_recv_pipe, inner_stdout = Pipe(duplex=False)
+        # Make the pipe look like the inner worker's stdout. Surprisingly, this works.
+        inner_stdout.write = inner_stdout.send
+        inner_stdout.flush = lambda: None
+        self.inner_worker = InnerWorker(self.ipcURI, daemon=True, stdout=inner_stdout, stderr=inner_stdout)
         self.inner_worker.start()
 
         self.working = False
@@ -44,19 +48,24 @@ class Worker(Process):
 
         # Setup async stdio/stderr
         self.stdsocket = self.ctx.socket(zmq.PUSH)
+        self.stdsocket.connect(self.endpoint + ":" + str(self.logport))
+        self.unsent_stdout = ""
 
         # Setup IPC to inner worker
         self.inner_socket = self.ctx.socket(zmq.REQ)
         self.inner_socket.bind(self.ipcURI)
 
+    def setupPoller(self):
         self.poller = zmq.Poller()
         self.poller.register(self.master_socket, zmq.POLLIN)
         self.poller.register(self.inner_socket, zmq.POLLIN)
+        self.poller.register(self.inner_recv_pipe.fileno(), zmq.POLLIN)
 
     def setup(self):
         self.log("Initializing.")
         self.setupZMQ()
         self.setupWorker()
+        self.setupPoller()
         self.log("Initialization complete.")
 
     def log(self, *args, **kwargs):
@@ -146,6 +155,14 @@ class Worker(Process):
         self.workingID = None
         self.working = False
 
+    def maybeSendStdout(self):
+        self.unsent_stdout += self.inner_recv_pipe.recv()
+        if self.unsent_stdout.endswith("\n"):
+            string_to_send = self.unsent_stdout[:-1]  # Don't send the newline
+            print("INNER >>>", string_to_send)
+            self.stdsocket.send_string(string_to_send)
+            self.unsent_stdout = ""
+
     def run(self):
         self.setup()
 
@@ -158,3 +175,6 @@ class Worker(Process):
             # Finish work orders
             if socks.get(self.inner_socket) == zmq.POLLIN:
                 self.finishWork()
+
+            if socks.get(self.inner_recv_pipe.fileno()) == zmq.POLLIN:
+                self.maybeSendStdout()
