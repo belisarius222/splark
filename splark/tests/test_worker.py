@@ -26,25 +26,28 @@ class WorkerWithSocket:
         self.socket.send_multipart((self.worker_id, b"", b"die"))
         self.worker.join()
 
-    def send_and_recv(self, *args, timeout=1000):
+    def send_and_recv(self, *args, timeout=1000, expect=None):
         self.socket.send_multipart((self.worker_id, b"",) + args)
         assert self.socket.poll(timeout, zmq.POLLIN), "Timeout waiting for response to: {}".format(args)
-        worker_id, _, response = self.socket.recv_multipart()
+
+        worker_id, _, response_pickle = self.socket.recv_multipart()
         assert worker_id == self.worker_id
-        return fromCP(response)
+
+        response = fromCP(response_pickle)
+        if expect is not None:
+            assert response == expect, "Invalid response from '{}' command. Expected: {} Actual: {}".format(args[0], expect, response)
+        return response
 
 
 def test_worker_send_ping():
     with WorkerWithSocket() as send_and_recv:
-        pong = send_and_recv(b"ping")
-        assert pong == "pong", pong
+        send_and_recv(b"ping", expect="pong")
 
 
 def test_worker_set_data():
     with WorkerWithSocket() as send_and_recv:
         dataToSend = toCP(list(range(10)))
-        pong = send_and_recv(b"setdata", b"daterz-idz", dataToSend)
-        assert pong, "Invalid response from "
+        send_and_recv(b"setdata", b"daterz-idz", dataToSend, expect=True)
 
 
 def test_worker_set_get_data():
@@ -52,24 +55,17 @@ def test_worker_set_get_data():
         data = list(range(10))
         data_pickle = toCP(data)
 
-        response = send_and_recv(b"setdata", b"daterz-idz", data_pickle)
-        assert response is True, response
-
-        response = send_and_recv(b"getdata", b"daterz-idz")
-        assert response == data, response
+        send_and_recv(b"setdata", b"daterz-idz", data_pickle, expect=True)
+        send_and_recv(b"getdata", b"daterz-idz", expect=data)
 
 
 def test_worker_set_list_data():
     with WorkerWithSocket() as send_and_recv:
         dataToSend = toCP(list(range(10)))
-
         data_id = b"daterz-idz"
-        pong = send_and_recv(b"setdata", data_id, dataToSend)
-        assert pong is True, pong
 
-        listing = send_and_recv(b"listdata")
-        assert len(listing) == 1
-        assert data_id in listing
+        send_and_recv(b"setdata", data_id, dataToSend, expect=True)
+        send_and_recv(b"listdata", expect=[data_id])
 
 
 @timed(1)
@@ -78,19 +74,15 @@ def test_worker_set_call_get_data():
         data = list(range(10))
         data_pickle = toCP(data)
         data_id = b"data1"
-        response = send_and_recv(b"setdata", data_id, data_pickle)
-        assert response is True, response
+        send_and_recv(b"setdata", data_id, data_pickle, expect=True)
 
         fun_id = b"fun1"
         fun = lambda x: x + 1
         fun_pickle = toCP(fun)
-        response = send_and_recv(b"setdata", fun_id, fun_pickle)
-        assert response is True, response
+        send_and_recv(b"setdata", fun_id, fun_pickle, expect=True)
 
         map_output_id = b"data2"
-        started_work = send_and_recv(b"map", fun_id, data_id, map_output_id)
-        assert type(started_work) == bool, "Malformed response from \"map\" command: {}".format(started_work)
-        assert started_work is True, "Worker was unable to start \"map\" command."
+        send_and_recv(b"map", fun_id, data_id, map_output_id, expect=True)
 
         # Poll the worker repeatedly until it's done.
         isworking = True
@@ -101,5 +93,4 @@ def test_worker_set_call_get_data():
         listing = send_and_recv(b"listdata")
         assert set(listing) == {data_id, fun_id, map_output_id}, listing
 
-        output_data = send_and_recv(b"getdata", map_output_id)
-        assert output_data == list(map(fun, data)), output_data
+        send_and_recv(b"getdata", map_output_id, expect=list(map(fun, data)))
