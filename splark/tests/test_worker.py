@@ -4,7 +4,7 @@ from pickle import loads, dumps
 import zmq
 
 from splark.cloudpickle import dumps as toCP
-from splark.dataWorker import Worker
+from splark.worker.worker import Worker
 
 
 class WorkerWithSocket:

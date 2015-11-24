@@ -1,52 +1,11 @@
-import random
 import sys
 import time
 from uuid import uuid4
 from multiprocessing import Process
 
-from pickle import loads
-from splark.cloudpickle import dumps
 import zmq
 
-
-def toCP(pyObj):
-    return dumps(pyObj)
-
-
-def fromCP(pklBytes):
-    return loads(pklBytes)
-
-
-def randomID(length=10):
-    return "".join([random.choice("abcdef1234567890") for i in range(10)])
-
-
-class InnerWorker(Process):
-    def __init__(self, uri, stdout=sys.stdout, stderr=sys.stderr, **kwargs):
-        Process.__init__(self, **kwargs)
-
-        self._uri = uri
-
-    def setup(self):
-        self._ctx = zmq.Context()
-        self._skt = self._ctx.socket(zmq.REP)
-        self._skt.connect(self._uri)
-
-    def run(self):
-        self.setup()
-
-        while True:
-            parts = self._skt.recv_multipart()
-
-            # Uncloudpickel everything
-            # f, ArgList1, ArgList2, ArgList3 . . .
-            f, *args = [fromCP(part) for part in parts]
-
-            # Do the actual work!
-            # MRG TODO: This could be much more sophisticated.
-            results = [f(*fargs) for fargs in zip(*args)]
-
-            self._skt.send(toCP(results))
+from splark.worker.inner import InnerWorker
 
 
 class Worker(Process):
