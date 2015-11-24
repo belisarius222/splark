@@ -97,8 +97,8 @@ class Worker(Process):
     # They all return a pyobject, which is the serialized
     # response to the call
     def _handle_setdata(self, id, blob):
-        print("")
         self.data[id] = blob
+        print("setdata", id, ": ", blob)
         return True
 
     def _handle_getdata(self, id):
@@ -136,9 +136,7 @@ class Worker(Process):
         return "pong"
 
     def _handle_die(self):
-        print("TERMINATING WORKER")
         self.worker.terminate()
-        print("TERMINATED")
         self.working = False
         sys.exit(0)
 
@@ -157,7 +155,11 @@ class Worker(Process):
         assert fHandler is not None, "No handler for request:" + requestType
 
         # Call the handler on the remaining arguments
-        self.master.send_pyobj(fHandler(*args))
+        result = fHandler(*args)
+        if type(result) is bytes:
+            self.master.send(result)
+        else:
+            self.master.send_pyobj(result)
 
     def startWork(self, inIDs, outID):
         assert not self.working
