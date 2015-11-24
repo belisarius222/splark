@@ -1,6 +1,5 @@
-import time
-
 import zmq
+from nose.tools import timed
 
 from splark.misc import fromCP, toCP
 from splark.worker.worker import Worker
@@ -73,6 +72,7 @@ def test_worker_set_list_data():
         assert data_id in listing
 
 
+@timed(1)
 def test_worker_set_call_get_data():
     with WorkerWithSocket() as test_harness:
         data = list(range(10))
@@ -88,11 +88,17 @@ def test_worker_set_call_get_data():
         assert fromCP(pong)
 
         map_output_id = b"data2"
-        pong = test_harness.transact_to_worker(b"map", fun_id, data_id, map_output_id)
-        assert fromCP(pong), pong
+        started_work_pickle = test_harness.transact_to_worker(b"map", fun_id, data_id, map_output_id)
+        started_work = fromCP(started_work_pickle)
+        assert type(started_work) == bool, "Malformed response from \"map\" command: {}".format(started_work)
+        assert started_work is True, "Worker was unable to start \"map\" command."
 
-        # Give the worker enough time to finish working before asking it for its listing.
-        time.sleep(0.5)
+        # Poll the worker repeatedly until it's done.
+        isworking = True
+        while isworking:
+            isworking_pickle = test_harness.transact_to_worker(b"isworking")
+            isworking = fromCP(isworking_pickle)
+            assert type(isworking) == bool, "Malformed response from \"isworking\" command: {}".format(isworking)
 
         listing_pickle = test_harness.transact_to_worker(b"listdata")
         listing = fromCP(listing_pickle)
