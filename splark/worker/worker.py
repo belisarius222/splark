@@ -49,16 +49,25 @@ class Worker(Process):
         self.inner = self.ctx.socket(zmq.REQ)
         self.inner.bind(self.ipcURI)
 
+        self.poller = zmq.Poller()
+        self.poller.register(self.master, zmq.POLLIN)
+        self.poller.register(self.inner, zmq.POLLIN)
+
     def setup(self):
+        self.log("Initializing.")
         self.setupZMQ()
         self.setupWorker()
+        self.log("Setup complete.")
+
+    def log(self, *args, **kwargs):
+        short_name = self.workerID.split("worker-")[1][:8]
+        print(*("WORKER " + short_name + " >>>",) + args, **kwargs)
 
     # All _handle_* functions map 1:1 with API calls
     # They all return a pyobject, which is the serialized
     # response to the call
     def _handle_setdata(self, id, blob):
         self.data[id] = blob
-        print("setdata", id, ": ", blob)
         return True
 
     def _handle_getdata(self, id):
@@ -88,24 +97,21 @@ class Worker(Process):
         for id in inputIDs:
             if id not in self.data:
                 return False
-        print("Starting work!")
+        self.log("Starting work!")
         self.startWork(inputIDs, outID)
-        print("Started")
         return True
 
     def _handle_ping(self):
         return "pong"
 
     def _handle_die(self):
+        self.log("Terminating inner worker process.")
         self.worker.terminate()
         self.working = False
+        self.log("Exiting.")
         sys.exit(0)
 
-    def processRequests(self):
-        # Check to see if we have something we need to do
-        if not self.master.poll(100, zmq.POLLIN):
-            return
-
+    def processRequest(self):
         # Get the request and arguments from the exterior
         request = self.master.recv_multipart()
         requestType = request[0].decode("ascii")
@@ -116,6 +122,7 @@ class Worker(Process):
         assert fHandler is not None, "No handler for request:" + requestType
 
         # Call the handler on the remaining arguments
+        self.log("RECV \"{}\"".format(requestType))
         result = fHandler(*args)
         if type(result) is bytes:
             self.master.send(result)
@@ -132,13 +139,6 @@ class Worker(Process):
         self.workingID = outID
         self.working = True
 
-    def possiblyFinishWork(self):
-        if not self.working:
-            return
-        if not self.inner.poll(100, zmq.POLLIN):
-            return
-        self.finishWork()
-
     def finishWork(self):
         # Return the work unit to the data pool with the above semaphores
         self.data[self.workingID] = self.inner.recv()
@@ -151,8 +151,11 @@ class Worker(Process):
         self.setup()
 
         while True:
+            socks = dict(self.poller.poll())
             # Look for incoming requests
-            self.processRequests()
+            if socks.get(self.master) == zmq.POLLIN:
+                self.processRequest()
 
             # Finish work orders
-            self.possiblyFinishWork()
+            if socks.get(self.inner) == zmq.POLLIN:
+                self.finishWork()
