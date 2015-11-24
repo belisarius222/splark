@@ -25,8 +25,8 @@ class Worker(Process):
         self.data = {}
 
     def setupWorker(self):
-        self.worker = InnerWorker(self.ipcURI, daemon=True)
-        self.worker.start()
+        self.inner_worker = InnerWorker(self.ipcURI, daemon=True)
+        self.inner_worker.start()
 
         self.working = False
         self.workingID = None
@@ -35,29 +35,29 @@ class Worker(Process):
         self.ctx = zmq.Context()
 
         # Setup syncronous comms to master
-        self.master = self.ctx.socket(zmq.REQ)
-        self.master.setsockopt(zmq.IDENTITY, self.workerID.encode("ascii"))
-        self.master.connect(self.endpoint + ":" + str(self.workport))
+        self.master_socket = self.ctx.socket(zmq.REQ)
+        self.master_socket.setsockopt(zmq.IDENTITY, self.workerID.encode("ascii"))
+        self.master_socket.connect(self.endpoint + ":" + str(self.workport))
 
         # Send the initial worker ID to start a transaction going
-        self.master.send(b"")
+        self.master_socket.send(b"")
 
         # Setup async stdio/stderr
         self.stdsocket = self.ctx.socket(zmq.PUSH)
 
         # Setup IPC to inner worker
-        self.inner = self.ctx.socket(zmq.REQ)
-        self.inner.bind(self.ipcURI)
+        self.inner_socket = self.ctx.socket(zmq.REQ)
+        self.inner_socket.bind(self.ipcURI)
 
         self.poller = zmq.Poller()
-        self.poller.register(self.master, zmq.POLLIN)
-        self.poller.register(self.inner, zmq.POLLIN)
+        self.poller.register(self.master_socket, zmq.POLLIN)
+        self.poller.register(self.inner_socket, zmq.POLLIN)
 
     def setup(self):
         self.log("Initializing.")
         self.setupZMQ()
         self.setupWorker()
-        self.log("Setup complete.")
+        self.log("Initialization complete.")
 
     def log(self, *args, **kwargs):
         short_name = self.workerID.split("worker-")[1][:8]
@@ -80,7 +80,7 @@ class Worker(Process):
         return self.working
 
     def _handle_resetworker(self):
-        self.worker.terminate()
+        self.inner_worker.terminate()
         time.sleep(1)
         self.setupWorker()
         return True
@@ -90,13 +90,12 @@ class Worker(Process):
         if self.working:
             return False
 
-        inputIDs = ids[:-1]
-        outID = ids[-1]
+        *inputIDs, outID = ids
 
         # All datae must already be here
-        for id in inputIDs:
-            if id not in self.data:
-                return False
+        if any(idee not in self.data for idee in inputIDs):
+            return False
+
         self.log("Starting work!")
         self.startWork(inputIDs, outID)
         return True
@@ -106,14 +105,14 @@ class Worker(Process):
 
     def _handle_die(self):
         self.log("Terminating inner worker process.")
-        self.worker.terminate()
+        self.inner_worker.terminate()
         self.working = False
         self.log("Exiting.")
         sys.exit(0)
 
     def processRequest(self):
         # Get the request and arguments from the exterior
-        request = self.master.recv_multipart()
+        request = self.master_socket.recv_multipart()
         requestType = request[0].decode("ascii")
         args = tuple(request[1:])
 
@@ -125,15 +124,15 @@ class Worker(Process):
         self.log("RECV \"{}\"".format(requestType))
         result = fHandler(*args)
         if type(result) is bytes:
-            self.master.send(result)
+            self.master_socket.send(result)
         else:
-            self.master.send_pyobj(result)
+            self.master_socket.send_pyobj(result)
 
     def startWork(self, inIDs, outID):
         assert not self.working
 
         # Dispatch a map to the inner worker
-        self.inner.send_multipart(tuple(self.data[id] for id in inIDs))
+        self.inner_socket.send_multipart(tuple(self.data[id] for id in inIDs))
 
         # Store state for when we return
         self.workingID = outID
@@ -141,7 +140,7 @@ class Worker(Process):
 
     def finishWork(self):
         # Return the work unit to the data pool with the above semaphores
-        self.data[self.workingID] = self.inner.recv()
+        self.data[self.workingID] = self.inner_socket.recv()
 
         # Clear the semaphors
         self.workingID = None
@@ -153,9 +152,9 @@ class Worker(Process):
         while True:
             socks = dict(self.poller.poll())
             # Look for incoming requests
-            if socks.get(self.master) == zmq.POLLIN:
+            if socks.get(self.master_socket) == zmq.POLLIN:
                 self.processRequest()
 
             # Finish work orders
-            if socks.get(self.inner) == zmq.POLLIN:
+            if socks.get(self.inner_socket) == zmq.POLLIN:
                 self.finishWork()
