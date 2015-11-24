@@ -15,6 +15,7 @@ class Worker(Process):
         self.workport = workport
         self.logport = logport
         self.workerID = workerID
+        self._is_stdsocket_setup = False
 
         if self.workerID is None:
             self.workerID = "worker-" + str(uuid4())
@@ -50,6 +51,7 @@ class Worker(Process):
         # Setup async stdio/stderr
         self.stdsocket = self.ctx.socket(zmq.PUSH)
         self.stdsocket.connect(self.endpoint + ":" + str(self.logport))
+        self._is_stdsocket_setup = True
 
         # Setup IPC to inner worker
         self.inner_socket = self.ctx.socket(zmq.REQ)
@@ -74,6 +76,7 @@ class Worker(Process):
         print(*print_args)
         # Buffer this message to be sent over stdout.
         self.unsent_stdout += "\n" + " ".join(print_args) + "\n"
+        self.flush_stdout_buffer()
 
     # All _handle_* functions map 1:1 with API calls
     # They all return a pyobject, which is the serialized
@@ -158,8 +161,14 @@ class Worker(Process):
         self.workingID = None
         self.working = False
 
-    def maybeSendStdout(self):
+    def recv_stdout(self):
         self.unsent_stdout += self.inner_recv_pipe.recv()
+        self.flush_stdout_buffer()
+
+    def flush_stdout_buffer(self):
+        if not self._is_stdsocket_setup:
+            return
+
         *messages, self.unsent_stdout = self.unsent_stdout.split("\n")
         for message in messages:
             # Ignore blank lines.
@@ -182,4 +191,4 @@ class Worker(Process):
                 self.finishWork()
 
             if socks.get(self.inner_recv_pipe.fileno()) == zmq.POLLIN:
-                self.maybeSendStdout()
+                self.recv_stdout()
