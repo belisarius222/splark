@@ -157,11 +157,10 @@ class Worker(Process):
 
     def maybeSendStdout(self):
         self.unsent_stdout += self.inner_recv_pipe.recv()
-        if self.unsent_stdout.endswith("\n"):
-            string_to_send = self.unsent_stdout[:-1]  # Don't send the newline
-            print("INNER >>>", string_to_send)
-            self.stdsocket.send_string(string_to_send)
-            self.unsent_stdout = ""
+        *messages, self.unsent_stdout = self.unsent_stdout.split("\n")
+        for message in messages:
+            print("INNER >>>", message)
+            self.stdsocket.send_string(message)
 
     def run(self):
         self.setup()
