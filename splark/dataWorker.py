@@ -22,14 +22,18 @@ def randomID(length=10):
 
 
 class InnerWorker(Process):
-    def __init__(self, uri, stdout=sys.stdout, stderr=sys.stderr):
-        Process.__init__(self)
+    def __init__(self, uri, stdout=sys.stdout, stderr=sys.stderr, **kwargs):
+        Process.__init__(self, **kwargs)
 
         self._uri = uri
+
+    def setup(self):
         self._ctx = zmq.Context()
         self._skt = self._ctx.socket(zmq.REP)
 
     def run(self):
+        self.setup()
+
         while True:
             parts = self._skt.recv_multipart()
 
@@ -61,8 +65,7 @@ class Worker(Process):
         self.data = {}
 
     def setupWorker(self):
-        self.worker = InnerWorker(self.ipcURI)
-        self.worker.daemon = True
+        self.worker = InnerWorker(self.ipcURI, daemon=True)
         self.worker.start()
 
         self.working = False
@@ -91,8 +94,8 @@ class Worker(Process):
         self.setupWorker()
 
     # All _handle_* functions map 1:1 with API calls
-    # They all return a pyobject, which is the serialized 
-    # response to the RPC call
+    # They all return a pyobject, which is the serialized
+    # response to the call
     def _handle_setdata(self, id, blob):
         print("")
         self.data[id] = blob
@@ -112,10 +115,6 @@ class Worker(Process):
         time.sleep(1)
         self.setupWorker()
         return True
-
-    def _handle_pending_work(self):
-        # Wait for the
-        self.inner.recv()
 
     def _handle_map(self, *ids):
         # Work not queued, already working
@@ -137,7 +136,9 @@ class Worker(Process):
         return "pong"
 
     def _handle_die(self):
+        print("TERMINATING WORKER")
         self.worker.terminate()
+        print("TERMINATED")
         self.working = False
         sys.exit(0)
 

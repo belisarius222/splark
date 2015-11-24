@@ -14,38 +14,36 @@ class WorkerWithSocket:
         self._w.start()
         self._skt = zmq.Context().socket(zmq.ROUTER)
         self._skt.bind("tcp://*:23456")
-        return self._w, self._skt
+        assert self._skt.poll(1000, zmq.POLLIN), "No response from started worker"
+
+        self._wid = self._skt.recv_multipart()[0]
+        print("Worker reports in with id:", self._wid)
+        assert "worker-" in self._wid.decode("ascii")
+        assert self._w.is_alive()
+
+        print("Enter Success")
+        return self._w, self._wid, self._skt
 
     def __exit__(self, arg1, arg2, arg3):
+        print("Exiting")
         assert self._w.is_alive(), "Process Died During Testing"
-        self._skt.close()
-        self._w.terminate()
+        self._skt.send_multipart((self._wid, b"", b"die"))
         self._w.join()
 
 
-def test_basic():
-    w = Worker("tcp://localhost")
-    w.start()
+# def test_basic():
+#     w = Worker("tcp://localhost")
+#     w.start()
 
-    time.sleep(2)
+#     time.sleep(2)
 
-    assert w.is_alive()
-    w.terminate()
-    w.join()
-
-
-def test_worker_id():
-    with WorkerWithSocket() as (wrkr, skt):
-        assert skt.poll(1000, zmq.POLLIN), "No response from started worker"
-        wid = skt.recv_multipart()[0]
-        print("Worker reports in with id:", wid)
-        assert "worker-" in wid.decode("ascii")
-        assert wrkr.is_alive()
+#     assert w.is_alive()
+#     w.terminate()
+#     w.join()
 
 
 def test_worker_send_ping():
-    with WorkerWithSocket() as (wrkr, skt):
-        wid = skt.recv_multipart()[0]
+    with WorkerWithSocket() as (wrkr, wid, skt):
         skt.send_multipart((wid, b"", b"ping"))
         assert skt.poll(1000, zmq.POLLIN)
         id, _, pong = skt.recv_multipart()
@@ -53,8 +51,7 @@ def test_worker_send_ping():
 
 
 def test_worker_send_data():
-    with WorkerWithSocket() as (wrkr, skt):
-        wid = skt.recv_multipart()[0]
+    with WorkerWithSocket() as (wrkr, wid, skt):
         dataToSend = dumps(list(range(10)))
 
         skt.send_multipart((wid, b"", b"setdata", b"daterz-idz", dataToSend))
