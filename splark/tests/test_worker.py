@@ -130,7 +130,10 @@ def test_worker_stdout_stream():
 
         for i in data:
             received_stdout = stdsocket.recv()
-            assert received_stdout == str(i).encode("ascii"), received_stdout
+            # Ignore the outer worker's logging.
+            while received_stdout.startswith(b"WORKER"):
+                received_stdout = stdsocket.recv()
+            assert received_stdout == str(i).encode("ascii"), (i, received_stdout)
 
         listing = send_and_recv(b"listdata")
         assert set(listing) == {data_id, fun_id, map_output_id}, listing

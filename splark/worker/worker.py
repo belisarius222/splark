@@ -23,6 +23,7 @@ class Worker(Process):
 
         # Data id: cloudpickle
         self.data = {}
+        self.unsent_stdout = ""
 
     def setupWorker(self):
         self.inner_recv_pipe, inner_stdout = Pipe(duplex=False)
@@ -49,7 +50,6 @@ class Worker(Process):
         # Setup async stdio/stderr
         self.stdsocket = self.ctx.socket(zmq.PUSH)
         self.stdsocket.connect(self.endpoint + ":" + str(self.logport))
-        self.unsent_stdout = ""
 
         # Setup IPC to inner worker
         self.inner_socket = self.ctx.socket(zmq.REQ)
@@ -68,9 +68,12 @@ class Worker(Process):
         self.setupPoller()
         self.log("Initialization complete.")
 
-    def log(self, *args, **kwargs):
+    def log(self, *args):
         short_name = self.workerID.split("worker-")[1][:8]
-        print(*("WORKER " + short_name + " >>>",) + args, **kwargs)
+        print_args = ("WORKER " + short_name + " >>>",) + args
+        print(*print_args)
+        # Buffer this message to be sent over stdout.
+        self.unsent_stdout += "\n" + " ".join(print_args) + "\n"
 
     # All _handle_* functions map 1:1 with API calls
     # They all return a pyobject, which is the serialized
@@ -159,6 +162,9 @@ class Worker(Process):
         self.unsent_stdout += self.inner_recv_pipe.recv()
         *messages, self.unsent_stdout = self.unsent_stdout.split("\n")
         for message in messages:
+            # Ignore blank lines.
+            if message == "":
+                continue
             print("INNER >>>", message)
             self.stdsocket.send_string(message)
 
