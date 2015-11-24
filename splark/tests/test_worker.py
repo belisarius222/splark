@@ -1,9 +1,8 @@
 import time
-from pickle import loads, dumps
 
 import zmq
 
-from splark.cloudpickle import dumps as toCP
+from splark.misc import fromCP, toCP
 from splark.worker.worker import Worker
 
 
@@ -39,22 +38,22 @@ class WorkerWithSocket:
 def test_worker_send_ping():
     with WorkerWithSocket() as test_harness:
         pong = test_harness.transact_to_worker(b"ping")
-        assert loads(pong) == "pong", loads(pong)
+        assert fromCP(pong) == "pong", fromCP(pong)
 
 
 def test_worker_set_data():
     with WorkerWithSocket() as test_harness:
-        dataToSend = dumps(list(range(10)))
+        dataToSend = toCP(list(range(10)))
         pong = test_harness.transact_to_worker(b"setdata", b"daterz-idz", dataToSend)
-        assert loads(pong), pong
+        assert fromCP(pong), pong
 
 
 def test_worker_set_get_data():
     with WorkerWithSocket() as test_harness:
-        dataToSend = dumps(list(range(10)))
+        dataToSend = toCP(list(range(10)))
 
         pong = test_harness.transact_to_worker(b"setdata", b"daterz-idz", dataToSend)
-        assert loads(pong), pong
+        assert fromCP(pong), pong
 
         pickled_response = test_harness.transact_to_worker(b"getdata", b"daterz-idz")
         assert dataToSend == pickled_response
@@ -62,47 +61,43 @@ def test_worker_set_get_data():
 
 def test_worker_set_list_data():
     with WorkerWithSocket() as test_harness:
-        dataToSend = dumps(list(range(10)))
+        dataToSend = toCP(list(range(10)))
 
         data_id = b"daterz-idz"
         pong = test_harness.transact_to_worker(b"setdata", data_id, dataToSend)
-        assert loads(pong)
+        assert fromCP(pong)
 
         pickled_listing = test_harness.transact_to_worker(b"listdata")
-        listing = loads(pickled_listing)
+        listing = fromCP(pickled_listing)
         assert len(listing) == 1
         assert data_id in listing
 
 
 def test_worker_set_call_get_data():
     with WorkerWithSocket() as test_harness:
-        print("Sending Data")
         data = list(range(10))
-        data_pickle = dumps(data)
+        data_pickle = toCP(data)
         data_id = b"data1"
         pong = test_harness.transact_to_worker(b"setdata", data_id, data_pickle)
-        assert loads(pong)
+        assert fromCP(pong)
 
-        print("Sending Function")
         fun_id = b"fun1"
         fun = lambda x: x + 1
         fun_pickle = toCP(fun)
         pong = test_harness.transact_to_worker(b"setdata", fun_id, fun_pickle)
-        assert loads(pong)
+        assert fromCP(pong)
 
-        print("Sending Map Request")
         map_output_id = b"data2"
         pong = test_harness.transact_to_worker(b"map", fun_id, data_id, map_output_id)
-        assert loads(pong), pong
+        assert fromCP(pong), pong
 
-        print("\tReturned")
-        time.sleep(1)
+        # Give the worker enough time to finish working before asking it for its listing.
+        time.sleep(0.5)
 
-        print("Sending list")
         listing_pickle = test_harness.transact_to_worker(b"listdata")
-        listing = loads(listing_pickle)
+        listing = fromCP(listing_pickle)
 
         assert set(listing) == {data_id, fun_id, map_output_id}, listing
 
         output_data_pickle = test_harness.transact_to_worker(b"getdata", map_output_id)
-        assert loads(output_data_pickle) == list(map(fun, data)), loads(output_data_pickle)
+        assert fromCP(output_data_pickle) == list(map(fun, data)), fromCP(output_data_pickle)
