@@ -30,6 +30,7 @@ class InnerWorker(Process):
     def setup(self):
         self._ctx = zmq.Context()
         self._skt = self._ctx.socket(zmq.REP)
+        self._skt.connect(self._uri)
 
     def run(self):
         self.setup()
@@ -43,7 +44,7 @@ class InnerWorker(Process):
 
             # Do the actual work!
             # MRG TODO: This could be much more sophisticated.
-            results = [f(fargs) for fargs in zip(*args)]
+            results = [f(*fargs) for fargs in zip(*args)]
 
             self._skt.send(toCP(results))
 
@@ -128,8 +129,9 @@ class Worker(Process):
         for id in inputIDs:
             if id not in self.data:
                 return False
-
+        print("Starting work!")
         self.startWork(inputIDs, outID)
+        print("Started")
         return True
 
     def _handle_ping(self):
@@ -165,7 +167,7 @@ class Worker(Process):
         assert not self.working
 
         # Dispatch a map to the inner worker
-        self.inner.send_multi(tuple(self.data[id] for id in inIDs))
+        self.inner.send_multipart(tuple(self.data[id] for id in inIDs))
 
         # Store state for when we return
         self.workingID = outID

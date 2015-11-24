@@ -1,7 +1,9 @@
+import time
 from pickle import loads, dumps
 
 import zmq
 
+from splark.cloudpickle import dumps as toCP
 from splark.dataWorker import Worker
 
 
@@ -76,3 +78,45 @@ def test_worker_set_list_data():
         listing = loads(daterz2)
         assert len(listing) == 1
         assert dataID in listing
+
+
+def test_worker_set_call_get_data():
+    with WorkerWithSocket() as (wrkr, wid, skt):
+        data1 = list(range(10))
+        dataToSend = dumps(data1)
+
+        print("Sending Data")
+        dataID = b"data1"
+        skt.send_multipart((wid, b"", b"setdata", dataID, dataToSend))
+        assert skt.poll(1000, zmq.POLLIN)
+        id, _, pong = skt.recv_multipart()
+        assert loads(pong)
+
+        print("Sending Function")
+        funID = b"fun1"
+        fun = lambda x: x + 1
+        funPkl = toCP(fun)
+        skt.send_multipart((wid, b"", b"setdata", funID, funPkl))
+        assert skt.poll(1000, zmq.POLLIN)
+        id, _, pong = skt.recv_multipart()
+        assert loads(pong)
+
+        print("Sending Map Request")
+        skt.send_multipart((wid, b"", b"map", funID, dataID, b"data2"))
+        assert skt.poll(1000, zmq.POLLIN)
+        _, __, daterz2 = skt.recv_multipart()
+
+        print("\tReturned")
+        time.sleep(1)
+
+        print("Sending list")
+        skt.send_multipart((wid, b"", b"listdata"))
+        _, __, daterz2 = skt.recv_multipart()
+        listing = loads(daterz2)
+
+        assert len(listing) == 3, listing
+        assert dataID in listing
+
+        skt.send_multipart((wid, b"", b"getdata", b"data2"))
+        _, __, daterz2 = skt.recv_multipart()
+        assert loads(daterz2) == list(map(fun, data1))
