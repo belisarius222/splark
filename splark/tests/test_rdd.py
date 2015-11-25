@@ -14,7 +14,8 @@ def test_SplarkContext():
         sc.parallelize(range(10))
         assert dm.num_workers > 0
 
-    assert dm.num_workers == 0, "SplarkContext failed have workers killed on exit."
+    sc.stop()
+    assert dm.num_workers == 0, "SplarkContext failed have workers killed on stop."
 
 
 def test_RDD_basic():

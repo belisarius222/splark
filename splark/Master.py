@@ -56,12 +56,16 @@ class Master:
         self.send_cmd_to_all_workers(itertools.repeat((b"die",)))
         self.worker_ids = []
 
-    def wait_for_workers_to_finish(self):
-        pass
+    def wait_for_workers_to_finish(self, refresh_timeout=200):
+        while True:
+            responses = self.transact_to_all_workers(itertools.repeat((b"isworking",)))
+            if all(response is False for response in responses):
+                break
+            time.sleep(refresh_timeout / 1000)
 
-    def set_data(self, data_id, blobs):
-        get_data_for_index = lambda worker_index: (b"setdata", data_id, toCP(blobs[worker_index]))
-        cmd_tuple_iterator = map(get_data_for_index, itertools.count(0))
+    def set_data(self, data_id, iterator):
+        get_cmd_for_element = lambda element: (b"setdata", data_id, toCP(element))
+        cmd_tuple_iterator = map(get_cmd_for_element, iterator)
 
         responses = self.transact_to_all_workers(cmd_tuple_iterator)
 
@@ -74,8 +78,8 @@ class Master:
         cmd_tuple = (b"getdata", data_id)
         return self.transact_to_all_workers(itertools.repeat(cmd_tuple))
 
-    def map(self, func, ids, exit_id):
-        cmd_tuple = (b"map", toCP(func)) + ids + (exit_id,)
+    def map(self, func_id, ids, exit_id):
+        cmd_tuple = (b"map", func_id) + ids + (exit_id,)
         responses = self.transact_to_all_workers(itertools.repeat(cmd_tuple))
         responses_are_true = [response is True for response in responses]
         if not all(responses_are_true):

@@ -1,17 +1,20 @@
 class DummyMaster:
-    def __init__(self):
+    def __init__(self, workport=23456, logport=23457):
         self.rdds = {}
         self.num_workers = 0
 
-    def bind_ports(self, ports):
+    def release_ports(self):
         pass
 
-    def wait_for_workers(self, n=4):
+    def wait_for_worker_connections(self, n=4):
         self.num_workers = n
 
     def kill_workers(self):
         self.rdds = {}
         self.num_workers = 0
+
+    def wait_for_workers_to_finish(self):
+        pass
 
     def set_data(self, idee, rdd_data):
         self.rdds[idee] = partition_RDD(rdd_data, self.num_workers)
