@@ -46,7 +46,7 @@ class Worker(Process):
         self.master_socket.connect(self.endpoint + ":" + str(self.workport))
 
         # Send the initial worker ID to start a transaction going
-        self.master_socket.send(b"")
+        self.master_socket.send_pyobj(b"connect")
 
         # Setup async stdio/stderr
         self.stdsocket = self.ctx.socket(zmq.PUSH)
@@ -174,7 +174,7 @@ class Worker(Process):
             # Ignore blank lines.
             if message == "":
                 continue
-            print("INNER >>>", message)
+            print(message)
             self.stdsocket.send_string(message)
 
     def run(self):

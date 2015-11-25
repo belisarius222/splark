@@ -10,23 +10,30 @@ class Master:
         self.workport = workport
         self.logport = logport
 
-        ctx = zmq.Context()
+        self.ctx = zmq.Context()
 
-        self.worksock = ctx.socket(zmq.ROUTER)
+        self.worksock = self.ctx.socket(zmq.ROUTER)
         self.worksock.bind("tcp://*:" + str(workport))
 
-        self.stdsocket = ctx.socket(zmq.PULL)
+        self.stdsocket = self.ctx.socket(zmq.PULL)
         self.stdsocket.bind("tcp://*:" + str(logport))
 
         self.num_workers = 0
         self.worker_ids = []
 
-    def wait_for_worker_connections(self, n=4):
+    def release_ports(self):
+        self.worksock.close(linger=0)
+        self.stdsocket.close(linger=0)
+        self.ctx.term()
+
+    def wait_for_worker_connections(self, n=4, timeout=1000):
         poller = zmq.Poller()
         poller.register(self.worksock, zmq.POLLIN)
         poller.register(self.stdsocket, zmq.POLLIN)
 
-        while len(self.workers) < n:
+        start_time = time.time()
+
+        while len(self.worker_ids) < n:
             socks = dict(poller.poll())
             if socks.get(self.worksock) == zmq.POLLIN:
                 self._handle_worker_connect()
@@ -34,15 +41,19 @@ class Master:
             if socks.get(self.stdsocket) == zmq.POLLIN:
                 self._handle_worker_stdout()
 
+            if time.time() - start_time > (timeout / 1000):
+                raise TimeoutError("Failed to receive {} worker connections".format(n))
+
     def _handle_worker_connect(self):
-        worker_id, _ = self.recv_from_worker()
-        self.workers.append(worker_id)
+        worker_id, connect_message = self.recv_from_worker()
+        assert connect_message == b"connect", "Received invalid connect message from worker: {}".format(connect_message)
+        self.worker_ids.append(worker_id)
 
     def _handle_worker_stdout(self):
         print(self.stdsocket.recv())
 
     def kill_workers(self):
-        self.transact_to_all_workers(b"die", timeout=5000)
+        self.send_cmd_to_all_workers(itertools.repeat((b"die",)))
         self.worker_ids = []
 
     def wait_for_workers_to_finish(self):
@@ -61,11 +72,15 @@ class Master:
 
     def get_data(self, data_id):
         cmd_tuple = (b"getdata", data_id)
-        ordered_responses = self.transact_to_all_workers(b"getdata", itertools.repeat(cmd_tuple))
-        return ordered_responses
+        return self.transact_to_all_workers(itertools.repeat(cmd_tuple))
 
     def map(self, func, ids, exit_id):
-        pass
+        cmd_tuple = (b"map", toCP(func)) + ids + (exit_id,)
+        responses = self.transact_to_all_workers(itertools.repeat(cmd_tuple))
+        responses_are_true = [response is True for response in responses]
+        if not all(responses_are_true):
+            failed_worker_ids = [self.worker_ids[ix] for ix, ok in enumerate(responses_are_true) if not ok]
+            raise ValueError("Workers {} failed 'map' command.".format(failed_worker_ids))
 
     def transact_to_all_workers(self, cmd_tuple_iterator, timeout=1000):
         poller = zmq.Poller()
@@ -77,8 +92,8 @@ class Master:
         self.send_cmd_to_all_workers(cmd_tuple_iterator)
 
         worker_id_to_response = {}
-        while set(worker_id_to_response.keys()) != self.worker_ids:
-            socks = dict(poller.poll())
+        while set(worker_id_to_response.keys()) != set(self.worker_ids):
+            socks = dict(poller.poll(timeout))
             if socks.get(self.worksock) == zmq.POLLIN:
                 worker_id, response = self.recv_from_worker()
                 worker_id_to_response[worker_id] = response
