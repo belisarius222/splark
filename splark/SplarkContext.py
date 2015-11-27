@@ -14,10 +14,10 @@ class SplarkContext:
 
         self.master.wait_for_worker_connections(num_workers)
 
-    def parallelize(self, iterable, num_partitions=None):
+    def parallelize(self, iterable, num_partitions=None, rdd_class=RDD):
         num_partitions = num_partitions or self.default_parallelism
-        rdd = RDD(self.master)
-        self.master.set_data(rdd.id, iterable)
+        rdd = rdd_class(self.master, num_partitions)
+        rdd.parallelize(iterable)
         return rdd
 
     def stop(self):

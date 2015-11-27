@@ -34,6 +34,6 @@ class InnerWorker(Process):
 
             # Do the actual work!
             # MRG TODO: This could be much more sophisticated.
-            results = [f(*fargs) for fargs in zip(*args)]
+            results = f(*args)
 
             self._skt.send(toCP(results))

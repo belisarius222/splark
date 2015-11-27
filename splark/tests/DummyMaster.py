@@ -1,6 +1,6 @@
 class DummyMaster:
     def __init__(self, workport=23456, logport=23457):
-        self.rdds = {}
+        self.data = {}
         self.num_workers = 0
 
     def release_ports(self):
@@ -10,27 +10,30 @@ class DummyMaster:
         self.num_workers = n
 
     def kill_workers(self):
-        self.rdds = {}
+        self.data = {}
         self.num_workers = 0
 
     def wait_for_workers_to_finish(self):
         pass
 
     def set_data(self, idee, rdd_data):
-        self.rdds[idee] = partition_RDD(rdd_data, self.num_workers)
+        self.data[idee] = partition_RDD(rdd_data, self.num_workers)
 
     def get_data(self, idee):
-        return unpartition_RDD(self.rdds[idee])
+        return unpartition_RDD(self.data[idee])
 
-    def map(self, func, ids, exit_id):
-        rdds = [self.rdds[idee] for idee in ids]
+    def map(self, func_id, ids, exit_id):
+        rdds = [self.data[idee] for idee in ids]
         zipped_RDD = zip_RDDs(rdds)
 
-        self.rdds[exit_id] = [func(i, p) for i, p in enumerate(zipped_RDD)]
+        func = self.data[func_id][0]
+
+        self.data[exit_id] = [func(i, p) for i, p in enumerate(zipped_RDD)]
 
 
 def partition_RDD(rdd, num_partitions):
-    return [list(rdd[i::num_partitions]) for i in range(num_partitions)]
+    rdd_as_list = list(rdd)
+    return [list(rdd_as_list[i::num_partitions]) for i in range(num_partitions)]
 
 
 def unpartition_RDD(rdd):
