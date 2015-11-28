@@ -16,41 +16,16 @@ class DummyMaster:
     def wait_for_workers_to_finish(self):
         pass
 
-    def set_data(self, idee, rdd_data):
-        self.data[idee] = partition_RDD(rdd_data, self.num_workers)
+    def set_data(self, idee, data):
+        data_iterator = iter(data)
+        self.data[idee] = [next(data_iterator) for _ in range(self.num_workers)]
 
     def get_data(self, idee):
-        return unpartition_RDD(self.data[idee])
+        return self.data[idee]
 
     def map(self, func_id, ids, exit_id):
         rdds = [self.data[idee] for idee in ids]
-        zipped_RDD = zip_RDDs(rdds)
+        zipped_RDD = list(zip(*rdds))
 
         func = self.data[func_id][0]
-
-        self.data[exit_id] = [func(i, p) for i, p in enumerate(zipped_RDD)]
-
-
-def partition_RDD(rdd, num_partitions):
-    rdd_as_list = list(rdd)
-    return [list(rdd_as_list[i::num_partitions]) for i in range(num_partitions)]
-
-
-def unpartition_RDD(rdd):
-    rdd_as_list_of_lists = [list(partition) for partition in rdd]
-    num_partitions = len(rdd_as_list_of_lists)
-    rdd_length = sum(len(p) for p in rdd_as_list_of_lists)
-    ret = []
-    for i in range(rdd_length):
-        index_in_partition, partition_index = divmod(i, num_partitions)
-        ret.append(rdd_as_list_of_lists[partition_index][index_in_partition])
-
-    return ret
-
-
-def zip_RDDs(rdds):
-    if len(rdds) == 1:
-        return rdds[0]
-    num_partitions = len(rdds[0])
-    unpartitioned_RDDs = [unpartition_RDD(rdd) for rdd in rdds]
-    return partition_RDD(zip(*unpartitioned_RDDs), num_partitions)
+        self.data[exit_id] = [func(*p) for p in zipped_RDD]

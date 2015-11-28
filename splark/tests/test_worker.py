@@ -1,4 +1,4 @@
-import zmq
+import time, zmq
 from nose.tools import timed
 
 from splark.misc import fromCP, toCP
@@ -8,7 +8,7 @@ from splark.worker.worker import Worker
 class WorkerWithSocket:
     def __init__(self, attributes=("send_and_recv",)):
         self._enter_attributes = attributes
-        self.worker = Worker("tcp://localhost")
+        self.worker = Worker("tcp://localhost", print_local=True)
 
     def __enter__(self):
         self.worker.start()
@@ -85,7 +85,7 @@ def test_worker_set_call_get_data():
         send_and_recv(b"setdata", data_id, data_pickle, expect=True)
 
         fun_id = b"fun1"
-        fun = lambda x: x + 1
+        fun = lambda partition: [x + 1 for x in partition]
         fun_pickle = toCP(fun)
         send_and_recv(b"setdata", fun_id, fun_pickle, expect=True)
 
@@ -96,12 +96,13 @@ def test_worker_set_call_get_data():
         isworking = True
         while isworking:
             isworking = send_and_recv(b"isworking")
+            time.sleep(0.1)
             assert type(isworking) == bool, "Malformed response from \"isworking\" command: {}".format(isworking)
 
         listing = send_and_recv(b"listdata")
         assert set(listing) == {data_id, fun_id, map_output_id}, listing
 
-        send_and_recv(b"getdata", map_output_id, expect=list(map(fun, data)))
+        send_and_recv(b"getdata", map_output_id, expect=fun(data))
 
 
 @timed(1)
@@ -112,9 +113,10 @@ def test_worker_stdout_stream():
         data_id = b"data1"
         send_and_recv(b"setdata", data_id, data_pickle, expect=True)
 
-        def fun(arg):
-            print(arg)
-            return arg
+        def fun(partition):
+            ret = [x + 1 for x in partition]
+            print(ret)
+            return ret
         fun_pickle = toCP(fun)
         fun_id = b"fun"
         send_and_recv(b"setdata", fun_id, fun_pickle, expect=True)
@@ -126,16 +128,17 @@ def test_worker_stdout_stream():
         isworking = True
         while isworking:
             isworking = send_and_recv(b"isworking")
+            time.sleep(0.1)
             assert type(isworking) == bool, "Malformed response from \"isworking\" command: {}".format(isworking)
 
-        for i in data:
+        received_stdout = stdsocket.recv()
+        # Ignore the outer worker's logging.
+        while received_stdout.startswith(b"WORKER"):
             received_stdout = stdsocket.recv()
-            # Ignore the outer worker's logging.
-            while received_stdout.startswith(b"WORKER"):
-                received_stdout = stdsocket.recv()
-            assert received_stdout == str(i).encode("ascii"), (i, received_stdout)
+        assert received_stdout == str(fun(data)).encode("ascii"), received_stdout
 
         listing = send_and_recv(b"listdata")
         assert set(listing) == {data_id, fun_id, map_output_id}, listing
 
-        send_and_recv(b"getdata", map_output_id, expect=list(map(fun, data)))
+        send_and_recv(b"getdata", map_output_id, expect=fun(data))
+        print("")  # Make sure this test doesn't end on half a line

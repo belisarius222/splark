@@ -20,7 +20,7 @@ class MasterWithWorkers:
 
         self.workers = []
         for i in range(num_workers):
-            worker = Worker("tcp://localhost", workport=self.workport, logport=self.logport)
+            worker = Worker("tcp://localhost", workport=self.workport, logport=self.logport, print_local=False)
             self.workers.append(worker)
 
     def __enter__(self):
@@ -75,7 +75,7 @@ def test_master_map():
         data_id = b"data"
         master.set_data(data_id, data)
 
-        fun = lambda x: x + 1
+        fun = lambda partition: [x + 1 for x in partition]
         fun_id = b"fun"
         master.set_data(fun_id, itertools.repeat(fun))
 
@@ -83,4 +83,4 @@ def test_master_map():
         master.map(fun_id, (data_id,), output_id)
         master.wait_for_workers_to_finish()
         recv_data = master.get_data(output_id)
-        assert recv_data == [list(map(fun, x)) for x in data], recv_data
+        assert recv_data == [fun(partition) for partition in data], recv_data

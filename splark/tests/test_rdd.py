@@ -1,3 +1,6 @@
+from nose.tools import timed
+
+
 def test_imports():
     from splark import Master  # NOQA
     from splark import RDD  # NOQA
@@ -18,6 +21,7 @@ def test_SplarkContext():
     assert dm.num_workers == 0, "SplarkContext failed have workers killed on stop."
 
 
+@timed(1)
 def test_RDD_basic():
     from splark import SplarkContext
     from splark.tests import DummyMaster
@@ -28,6 +32,7 @@ def test_RDD_basic():
         assert collected == list(range(10)), collected
 
 
+@timed(1)
 def test_RDD_map():
     from splark import SplarkContext
     from splark.tests import DummyMaster
@@ -42,6 +47,7 @@ def test_RDD_map():
         assert collected == [mappend(x) for x in initial], collected
 
 
+@timed(1)
 def test_RDD_reduce():
     from splark import SplarkContext
     from splark.tests import DummyMaster
