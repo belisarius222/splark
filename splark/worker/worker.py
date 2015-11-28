@@ -9,12 +9,14 @@ from splark.worker.inner import InnerWorker
 
 
 class Worker(Process):
-    def __init__(self, endpoint, workport=23456, logport=23457, workerID=None):
+    def __init__(self, endpoint, workport=23456, logport=23457, workerID=None, print_local=True):
         Process.__init__(self)
         self.endpoint = endpoint
         self.workport = workport
         self.logport = logport
         self.workerID = workerID
+        self.print_local = print_local
+
         self._is_stdsocket_setup = False
 
         if self.workerID is None:
@@ -73,7 +75,8 @@ class Worker(Process):
     def log(self, *args):
         short_name = self.workerID.split("worker-")[1][:8]
         print_args = ("WORKER " + short_name + " >>>",) + args
-        print(*print_args)
+        if self.print_local:
+            print(*print_args)
         # Buffer this message to be sent over stdout.
         self.unsent_stdout += "\n" + " ".join(print_args) + "\n"
         self.flush_stdout_buffer()
@@ -171,10 +174,11 @@ class Worker(Process):
 
         *messages, self.unsent_stdout = self.unsent_stdout.split("\n")
         for message in messages:
-            # Ignore blank lines.
+            # Ignore blank lines. Ain't nobody got time for that.
             if message == "":
                 continue
-            print(message)
+            if self.print_local:
+                print(message)
             self.stdsocket.send_string(message)
 
     def run(self):
@@ -190,5 +194,6 @@ class Worker(Process):
             if socks.get(self.inner_socket) == zmq.POLLIN:
                 self.finishWork()
 
+            # Pipe inner worker's stdout and stderr to master
             if socks.get(self.inner_recv_pipe.fileno()) == zmq.POLLIN:
                 self.recv_stdout()
