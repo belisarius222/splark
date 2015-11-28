@@ -17,12 +17,10 @@ class RDD:
 
     def parallelize(self, iterator):
         partitioned_data_iterator = self.partition(iterator)
-        print(partitioned_data_iterator)
         self.master.set_data(self.id, partitioned_data_iterator)
 
     def map(self, func):
         def map_func(partition):
-            print("partition", partition)
             return [func(element) for element in partition]
 
         return self.mapPartitions(map_func)
@@ -58,6 +56,7 @@ class RDD:
             rdd.evaluate()
 
         self.master.set_data(self.map_func_id, itertools.repeat(self.map_func))
+
         previous_ids = tuple(rdd.id for rdd in self.previous_RDDs)
         self.master.map(self.map_func_id, previous_ids, self.id)
         self.master.wait_for_workers_to_finish()
