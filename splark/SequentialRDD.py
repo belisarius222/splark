@@ -16,7 +16,7 @@ class SequentialRDD(RDD):
             partition_size = partition_base_size
 
             # Store any extra elements near the front of the list, arbitrarily.
-            if i <= extra_elements:
+            if i < extra_elements:
                 partition_size += 1
 
             partitions.append(data[data_index:data_index + partition_size])
