@@ -50,7 +50,10 @@ class Master:
         self.worker_ids.append(worker_id)
 
     def _handle_worker_stdout(self):
-        print(self.stdsocket.recv())
+        line = self.stdsocket.recv()
+        if type(line) is bytes:
+            line = line.decode("utf-8")
+        print(line)
 
     def kill_workers(self):
         self.send_cmd_to_all_workers(itertools.repeat((b"die",)))
