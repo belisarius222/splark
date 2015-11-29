@@ -19,10 +19,10 @@ class InnerWorker(Process):
         self._skt = self._ctx.socket(zmq.REP)
         self._skt.connect(self._uri)
 
-    def run(self):
         sys.stdout = self.stdout
         sys.stderr = self.stderr
 
+    def run(self):
         self.setup()
 
         while True:
