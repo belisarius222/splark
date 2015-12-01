@@ -58,7 +58,7 @@ class RDD:
         self.master.set_data(self.map_func_id, itertools.repeat(self.map_func))
 
         previous_ids = tuple(rdd.id for rdd in self.previous_RDDs)
-        self.master.map(self.map_func_id, previous_ids, self.id)
+        self.master.call(self.map_func_id, previous_ids, self.id)
         self.master.wait_for_workers_to_finish()
 
         self.is_evaluated = True

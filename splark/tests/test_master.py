@@ -69,7 +69,7 @@ def test_master_getdata_setdata():
 
 
 @timed(1)
-def test_master_map():
+def test_master_call():
     with MasterWithWorkers() as (master, workers):
         data = [[0, 1], [2, 3], [4], [5]]
         data_id = b"data"
@@ -80,7 +80,7 @@ def test_master_map():
         master.set_data(fun_id, itertools.repeat(fun))
 
         output_id = b"output"
-        master.map(fun_id, (data_id,), output_id)
+        master.call(fun_id, (data_id,), output_id)
         master.wait_for_workers_to_finish()
         recv_data = master.get_data(output_id)
         assert recv_data == [fun(partition) for partition in data], recv_data

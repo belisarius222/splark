@@ -39,8 +39,21 @@ class MultiWorkerAPI:
         self.worksock = self.ctx.socket(zmq.ROUTER)
         self.worksock.bind("tcp://*:" + str(workport))
 
+        self.workerIDs = []
+
         # WorkerID to cloudPickle
         self.responses = {}
+
+    def make_sync(method):
+        """
+        A function to create synchronous versions of methods.
+        This is not an instance method.
+        """
+        def sync_method(*args, **kwargs):
+            promise = method(*args, **kwargs)
+            return promise.getResult()
+
+        return sync_method
 
     def close(self):
         self.worksock.close()
@@ -51,21 +64,24 @@ class MultiWorkerAPI:
 
     def _handle_worker_response(self):
         assert self.worksock.poll(0)
-        workerID, _, respCP = self.worksock.recv_multipart()
+        workerID, _, responseCP = self.worksock.recv_multipart()
 
         # New worker connection
-        if workerID not in self.responses:
-            assert loads(respCP) == b"connect"
-            print("New Worker:", workerID)
-            self.responses[workerID] = None
+        if not self.is_worker_connected(workerID):
+            self._handle_worker_response(workerID, responseCP)
 
         assert self.responses[workerID] is None
-        self.responses[workerID] = respCP
+        self.responses[workerID] = responseCP
+
+    def _handle_worker_connect(self, workerID, responseCP):
+        assert loads(responseCP) == b"connect"
+        print("New Worker:", workerID)
+        self.responses[workerID] = None
 
     def _get_worker_response(self, workerID, timeout=None):
         # NB: Will block/hang on dead worker w/o specifying a timeout
         startTime = time.time()
-        while workerID not in self.responses:
+        while not self.is_worker_connected(workerID):
             # Check for timeout
             if (timeout is not None) and (time.time() - startTime) > timeout:
                 raise RuntimeError("Timout waiting for worker response")
@@ -89,44 +105,33 @@ class MultiWorkerAPI:
 
     def _sendToWorker(self, workerID, *args):
         assert type(workerID) is bytes
-        assert workerID in self.responses
+        assert self.is_worker_connected(workerID)
         assert all([type(arg) is bytes for arg in args])
 
         self.workport.send((workerID, b"") + args)
+        return self._getWorkerPromise(workerID)
 
-    def getWorkerList(self):
+    def get_worker_list(self):
         return list(self.responses.keys())
 
     def get_data_async(self, workerID, dataID):
-        self._sendToWorker(workerID, b"getdata", dataID)
-        return self._getWorkerPromise(workerID)
-
-    def get_data_sync(self, workerID, dataID):
-        return self.get_data_async(workerID, dataID).getResult()
+        return self._sendToWorker(workerID, b"getdata", dataID)
+    get_data_sync = make_sync(get_data_async)
 
     def set_data_async(self, workerID, dataID, data):
-        self._sendToWorker(workerID, b"setdata", dataID, data)
-        return self._getWorkerPromise(workerID)
-
-    def set_data_sync(self, workerID, dataID, data):
-        return self.set_data_async(workerID, dataID, data).getResult()
-
-    def send_function_sync(self, workerID, functionID, functionOrCP):
-        return self.send_function_async(workerID, functionID, functionOrCP).getResult()
+        return self._sendToWorker(workerID, b"setdata", dataID, data)
+    set_data_sync = make_sync(set_data_async)
 
     def send_function_async(self, workerID, functionID, functionOrCP):
         if callable(functionOrCP):
             functionOrCP = toCP(functionOrCP)
-        self._send_setdata(workerID, functionOrCP)
-        return self._getWorkerPromise(workerID)
+        return self._send_setdata(workerID, functionOrCP)
+    send_function_sync = make_sync(send_function_async)
 
     def call_async(self, workerID, functionID, argIDs, outID):
         allIDs = (functionID,) + argIDs + (outID,)
-        self._sendToWorker(workerID, *allIDs)
-        return self._getWorkerPromise(workerID)
-
-    def call_sync(self, workerID, functionID, argIDs, outID):
-        return self.call_async(workerID, functionID, argIDs, outID).getResult()
+        return self._sendToWorker(workerID, *allIDs)
+    call_sync = make_sync(call_async)
 
     def call_multi_sync(self, workerIDs, functionID, argIDs, outID):
         assert len(workerIDs) > 0
@@ -139,9 +144,6 @@ class MultiWorkerAPI:
     def call_multi_async(self, workerIDs, functionID, argIDs, outID):
         mappable = lambda wid: self.call_async(wid, functionID, argIDs, outID)
         return sum(map(mappable, workerIDs))
-
-    def map_sync(self, workerID, fID, argIDs, outID):
-        return self.map_async(workerID, fID, argIDs, outID).getResult()
 
     def map_async(self, workerID, fID, argIDs, outID):
         # MRG Note, I don't like this implementation
@@ -158,11 +160,8 @@ class MultiWorkerAPI:
             t.join()
             return result[0]
 
-        return TinyPromise(lambda: t.is_alive, lambda: getResult)
-
-    def map_multi_sync(self, workerIDs, fID, argIDs, outID):
-        p = self.map_multi_async(workerIDs, fID, argIDs, outID)
-        return p.getResult()
+        return TinyPromise(lambda: not t.is_alive, getResult)
+    map_sync = make_sync(map_async)
 
     def map_multi_async(self, workerIDs, fID, argIDs, outID):
         # MRG Note: suboptimal!  This blocks on all function
@@ -176,3 +175,7 @@ class MultiWorkerAPI:
             promise += self.get_data_async(workerID, outID)
 
         return promise
+    map_multi_sync = make_sync(map_multi_async)
+
+    def is_worker_connected(self, workerID):
+        return workerID in self.responses

@@ -5,6 +5,7 @@ from multiprocessing import Process, Pipe
 
 import zmq
 
+from splark.protocol import MasterConnection
 from splark.worker.inner import InnerWorker
 
 
@@ -43,12 +44,11 @@ class Worker(Process):
         self.ctx = zmq.Context()
 
         # Setup syncronous comms to master
-        self.master_socket = self.ctx.socket(zmq.REQ)
-        self.master_socket.setsockopt(zmq.IDENTITY, self.workerID.encode("ascii"))
+        self.master_socket = MasterConnection(self.ctx, self.workerID.encode("ascii"))
         self.master_socket.connect(self.endpoint + ":" + str(self.workport))
 
         # Send the initial worker ID to start a transaction going
-        self.master_socket.send_pyobj(b"connect")
+        self.master_socket.send_connect()
 
         # Setup async stdio/stderr
         self.stdsocket = self.ctx.socket(zmq.PUSH)
@@ -84,26 +84,26 @@ class Worker(Process):
     # All _handle_* functions map 1:1 with API calls
     # They all return a pyobject, which is the serialized
     # response to the call
-    def _handle_setdata(self, id, blob):
+    def _handle_SETDATA(self, id, blob):
         self.data[id] = blob
         return True
 
-    def _handle_getdata(self, id):
+    def _handle_GETDATA(self, id):
         return self.data[id]
 
-    def _handle_listdata(self):
+    def _handle_LISTDATA(self):
         return list(self.data.keys())
 
-    def _handle_isworking(self):
+    def _handle_ISWORKING(self):
         return self.working
 
-    def _handle_resetworker(self):
+    def _handle_RESETWORKER(self):
         self.inner_worker.terminate()
         time.sleep(1)
         self.setupWorker()
         return True
 
-    def _handle_map(self, *ids):
+    def _handle_CALL(self, *ids):
         # Work not queued, already working
         if self.working:
             return False
@@ -118,10 +118,10 @@ class Worker(Process):
         self.startWork(inputIDs, outID)
         return True
 
-    def _handle_ping(self):
-        return "pong"
+    def _handle_PING(self):
+        return b"pong"
 
-    def _handle_die(self):
+    def _handle_DIE(self):
         self.log("Terminating inner worker process.")
         self.inner_worker.terminate()
         self.working = False
@@ -130,9 +130,7 @@ class Worker(Process):
 
     def processRequest(self):
         # Get the request and arguments from the exterior
-        request = self.master_socket.recv_multipart()
-        requestType = request[0].decode("ascii")
-        args = tuple(request[1:])
+        requestType, args = self.master_socket.recv_cmd()
 
         # Get the handler for this request type
         fHandler = getattr(self, "_handle_" + requestType, None)
@@ -141,10 +139,7 @@ class Worker(Process):
         # Call the handler on the remaining arguments
         self.log("RECV \"{}\"".format(requestType))
         result = fHandler(*args)
-        if type(result) is bytes:
-            self.master_socket.send(result)
-        else:
-            self.master_socket.send_pyobj(result)
+        self.master_socket.send_response(result)
 
     def startWork(self, inIDs, outID):
         assert not self.working
