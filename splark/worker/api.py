@@ -1,61 +1,51 @@
 import time
-from pickle import loads
-from threading import Thread
+from asyncio import Future
 
 import zmq
 
-from splark.misc import toCP
+from splark.protocol import Commands
+from splark.misc import toCP, EmptyPromise
 
 
-class TinyPromise:
-    def __init__(self, isReady, getResult):
-        self.isReady = isReady
-        self.getResult = getResult
+class WorkerAPI:
+    def __init__(self, wid, parentAPI):
+        self._parent = parentAPI
+        self.wid = wid
 
-    def __add__(self, otherPromise):
-        bothReady = lambda: self.isReady() and otherPromise.isReady()
-        results = lambda: (self.getResult(), otherPromise.getResult())
-        return TinyPromise(bothReady, results)
-
-
-class EmptyPromise:
-    def isReady(self):
-        return True
-
-    def getResult(self):
-        raise NotImplemented()
-
-    def __add__(self, otherPromise):
-        return otherPromise
-
-    def __radd__(self, otherPromise):
-        return otherPromise
+    def __getattr__(self, callname):
+        def wrapper(*args):
+            return self._parent.proxyCall(callname, self.wid, args)
+        return wrapper
 
 
 class MultiWorkerAPI:
-    def __init__(self, workport):
+    def __init__(self, bindURI):
         self.ctx = zmq.Context()
 
         self.worksock = self.ctx.socket(zmq.ROUTER)
-        self.worksock.bind("tcp://*:" + str(workport))
-
-        self.workerIDs = []
+        self.worksock.bind(bindURI)
 
         # WorkerID to cloudPickle
-        self.responses = {}
+        self.widToResponse = {}
 
-    def make_sync(method):
-        """
-        A function to create synchronous versions of methods.
-        This is not an instance method.
-        """
-        def sync_method(*args, **kwargs):
-            promise = method(*args, **kwargs)
-            return promise.getResult()
+    def waitForWorkers(self, count, timeout=10):
+        startTime = time.time()
+        readyWorkerCount = 0
+        while readyWorkerCount < count:
+            self._pollForResponses(100)
 
-        return sync_method
+            readyWorkerCount = sum([1 for f in self.widToResponse.values() if f.done()])
+            print("Redy werkeks", readyWorkerCount)
+            if (time.time() - startTime) > timeout:
+                raise RuntimeError("Timed out waiting for %i workers" % count)
 
-    def close(self):
+        wids = list(self.widToResponse.keys())[:count]
+        return [WorkerAPI(wid, self) for wid in wids]
+
+    def close(self, killWorkers=True):
+        if killWorkers:
+            for wid in self.getWorkerList():
+                self.kill_worker_async(wid)
         self.worksock.close()
 
     def _pollForResponses(self, timeout=0):
@@ -63,25 +53,21 @@ class MultiWorkerAPI:
             self._handle_worker_response()
 
     def _handle_worker_response(self):
-        assert self.worksock.poll(0)
-        workerID, _, responseCP = self.worksock.recv_multipart()
+        workerID, _, respCP = self.worksock.recv_multipart()
 
         # New worker connection
-        if not self.is_worker_connected(workerID):
-            self._handle_worker_response(workerID, responseCP)
+        if workerID not in self.widToResponse:
+            assert respCP == Commands.CONNECT
+            print("New Worker:", workerID)
+            self.widToResponse[workerID] = Future()
 
-        assert self.responses[workerID] is None
-        self.responses[workerID] = responseCP
-
-    def _handle_worker_connect(self, workerID, responseCP):
-        assert loads(responseCP) == b"connect"
-        print("New Worker:", workerID)
-        self.responses[workerID] = None
+        self.widToResponse[workerID].set_result(respCP)
 
     def _get_worker_response(self, workerID, timeout=None):
+        assert workerID in self.widToResponse
         # NB: Will block/hang on dead worker w/o specifying a timeout
         startTime = time.time()
-        while not self.is_worker_connected(workerID):
+        while not self.widToResponse[workerID].done():
             # Check for timeout
             if (timeout is not None) and (time.time() - startTime) > timeout:
                 raise RuntimeError("Timout waiting for worker response")
@@ -90,92 +76,82 @@ class MultiWorkerAPI:
             self._pollForResponses(100)
 
         # Return the response, and reset the semaphore
-        resp = self.responses[workerID]
-        self.responses[workerID] = None
+        resp = self.widToResponse[workerID].result()
+        self.widToResponse[workerID] = Future()
         # NB: Below can raise exceptions!
-        return loads(resp)
+        return resp
 
     def _isReady(self, workerID):
         self._pollForResponses()
-        return self.responses[workerID] is not None
+        return self.widToResponse[workerID].done()
 
     def _getWorkerPromise(self, workerID):
-        return TinyPromise(lambda: self._isReady(workerID),
-                           lambda: self._get_worker_response(workerID))
+        return self.widToResponse[workerID]
 
     def _sendToWorker(self, workerID, *args):
+        # All other functions route through this,
+        # so harsh do sanity checks
         assert type(workerID) is bytes
-        assert self.is_worker_connected(workerID)
-        assert all([type(arg) is bytes for arg in args])
+        assert workerID in self.widToResponse
+        assert args[0] in Commands
 
-        self.workport.send((workerID, b"") + args)
+        self.worksock.send_multipart((workerID, b"") + args)
+
+    def proxyCall(self, callname, workers, args, async=False, multi=False):
+        assert hasattr(self, callname + "_async"), "Missing call named:" + callname
+        if not multi:
+            workers = [workers]
+
+        call = getattr(self, callname + "_async")
+        p = EmptyPromise()
+        for wid in workers:
+            p += call(wid, *args)
+
+        if not async:
+            return p.result()
+        return p
+
+    def kill_worker_async(self, workerID):
+        self._sendToWorker(workerID, Commands.DIE)
         return self._getWorkerPromise(workerID)
 
-    def get_worker_list(self):
-        return list(self.responses.keys())
+    def getWorkerList(self):
+        return list(self.widToResponse.keys())
+
+    def isworking_async(self, workerID):
+        self._sendToWorker(workerID, Commands.ISWORKING)
+        return self._getWorkerPromise(workerID)
+
+    def block_on_workers_done(self, workerList):
+        # MRG NOTE: Optimize me
+        workersStillWorking = list(workerList)
+        while len(workersStillWorking) != 0:
+            workersStillWorking = [wid for wid in workersStillWorking if self.isworking_sync(wid)]
+            print("Waiting workers" + str(len(workersStillWorking)))
 
     def get_data_async(self, workerID, dataID):
-        return self._sendToWorker(workerID, b"getdata", dataID)
-    get_data_sync = make_sync(get_data_async)
+        self._sendToWorker(workerID, Commands.GETDATA, dataID)
+        return self._getWorkerPromise(workerID)
 
     def set_data_async(self, workerID, dataID, data):
-        return self._sendToWorker(workerID, b"setdata", dataID, data)
-    set_data_sync = make_sync(set_data_async)
+        self._sendToWorker(workerID, Commands.SETDATA, dataID, data)
+        return self._getWorkerPromise(workerID)
+
+    def list_data_async(self, workerID):
+        self._sendToWorker(workerID, Commands.LISTDATA)
+        return self._getWorkerPromise(workerID)
+
+    def ping_async(self, workerID):
+        self._sendToWorker(workerID, Commands.PING)
+        return self._getWorkerPromise(workerID)
 
     def send_function_async(self, workerID, functionID, functionOrCP):
         if callable(functionOrCP):
             functionOrCP = toCP(functionOrCP)
-        return self._send_setdata(workerID, functionOrCP)
-    send_function_sync = make_sync(send_function_async)
+        self._send_setdata(workerID, functionOrCP)
+        return self._getWorkerPromise(workerID)
 
     def call_async(self, workerID, functionID, argIDs, outID):
-        allIDs = (functionID,) + argIDs + (outID,)
-        return self._sendToWorker(workerID, *allIDs)
-    call_sync = make_sync(call_async)
-
-    def call_multi_sync(self, workerIDs, functionID, argIDs, outID):
-        assert len(workerIDs) > 0
-
-        for workerID in workerIDs:
-            self._send_call(workerID, functionID, argIDs, outID)
-
-        return [self._get_worker_response(workerID) for workerID in workerIDs]
-
-    def call_multi_async(self, workerIDs, functionID, argIDs, outID):
-        mappable = lambda wid: self.call_async(wid, functionID, argIDs, outID)
-        return sum(map(mappable, workerIDs))
-
-    def map_async(self, workerID, fID, argIDs, outID):
-        # MRG Note, I don't like this implementation
-        # This speaks to a need to differentiate map/call on worker-side
-        def doMap(r):
-            self.call_sync(workerID, fID, argIDs, outID)
-            r.append(self.get_data_sync(outID))
-
-        result = []
-        t = Thread(target=doMap, args=(result,))
-        t.start()
-
-        def getResult():
-            t.join()
-            return result[0]
-
-        return TinyPromise(lambda: not t.is_alive, getResult)
-    map_sync = make_sync(map_async)
-
-    def map_multi_async(self, workerIDs, fID, argIDs, outID):
-        # MRG Note: suboptimal!  This blocks on all function
-        # completions before making final getdata requests.
-        # See note in map_async()
-        p = self.call_multi_async(workerIDs, fID, argIDs, outID)
-        p.getResult()
-
-        promise = EmptyPromise()
-        for workerID in workerIDs:
-            promise += self.get_data_async(workerID, outID)
-
-        return promise
-    map_multi_sync = make_sync(map_multi_async)
-
-    def is_worker_connected(self, workerID):
-        return workerID in self.responses
+        allIDs = (Commands.MAP, functionID,) + argIDs + (outID,)
+        self._sendToWorker(workerID, *allIDs)
+        return self._getWorkerPromise(workerID)

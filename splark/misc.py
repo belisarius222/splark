@@ -14,3 +14,31 @@ def toCP(pyObj):
 
 def fromCP(pklBytes):
     return loads(pklBytes)
+
+# MRG NOTE: Use futures here instead?
+class TinyPromise:
+    def __init__(self, isReady, getResult, wrapped=False):
+        self.isReady = isReady
+        if wrapped:
+            self.getResult = lambda: (getResult(),)
+        else:
+            self.getResult = getResult
+
+    def __add__(self, otherPromise):
+        bothReady = lambda: self.isReady() and otherPromise.isReady()
+        results = lambda: self.getResult() + otherPromise.getResult()
+        return TinyPromise(bothReady, results, wrapped=True)
+
+
+class EmptyPromise:
+    def isReady(self):
+        return True
+
+    def getResult(self):
+        return None
+
+    def __add__(self, otherPromise):
+        return otherPromise
+
+    def __radd__(self, otherPromise):
+        return otherPromise
