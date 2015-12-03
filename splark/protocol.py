@@ -3,12 +3,15 @@ from enum import Enum
 
 import zmq
 
-from splark.misc import fromCP, toCP
+from splark.misc import fromCP
 
 _ordered_byte = map(lambda i: i.to_bytes(1, "little"), itertools.count(0))
 
 
 class Commands(bytes, Enum):
+    OK = next(_ordered_byte)
+    TRUE = next(_ordered_byte)
+    FALSE = next(_ordered_byte)
     CONNECT = next(_ordered_byte)
     PING = next(_ordered_byte)
     DIE = next(_ordered_byte)
@@ -51,11 +54,10 @@ class WorkerConnection(AbstractSocketWrapper):
         return self.send_multipart((worker_id, b"", cmd) + args, **zmq_options)
 
     def recv_response(self, deserialize=fromCP):
-        worker_id, delimiter, response_serial = self.recv_multipart()
+        worker_id, delimiter, response = self.recv_multipart()
 
         assert type(worker_id) is bytes, worker_id
         assert delimiter == b"", delimiter
-        response = deserialize(response_serial)
 
         return worker_id, response
 
@@ -77,11 +79,8 @@ class MasterConnection(AbstractSocketWrapper):
         cmd_name = Commands.items()[cmd]
         return cmd_name, args
 
-    def send_response(self, response, serialize=toCP):
-        if type(response) is bytes:
-            self.send(response)
-        else:
-            self.send(serialize(response))
+    def send_response(self, response):
+        self.send(response)
 
     def send_connect(self):
         self.send_response(Commands.CONNECT)

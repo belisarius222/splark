@@ -5,7 +5,8 @@ from multiprocessing import Process, Pipe
 
 import zmq
 
-from splark.protocol import MasterConnection
+from splark.misc import toCP
+from splark.protocol import Commands, MasterConnection
 from splark.worker.inner import InnerWorker
 
 
@@ -86,32 +87,32 @@ class Worker(Process):
     # response to the call
     def _handle_SETDATA(self, id, blob):
         self.data[id] = blob
-        return True
+        return Commands.OK
 
     def _handle_DELDATA(self, id):
         try:
             del self.data[id]
-            return True
+            return Commands.TRUE
         except KeyError:
-            return False
+            return Commands.FALSE
 
     def _handle_GETDATA(self, id):
         try:
             return self.data[id]
         except KeyError as e:
-            return e  # TAB TODO: better error reporting
+            return toCP(e)
 
     def _handle_LISTDATA(self):
-        return list(self.data.keys())
+        return toCP(list(self.data.keys()))
 
     def _handle_ISWORKING(self):
-        return self.working
+        return Commands.TRUE if self.working else Commands.FALSE
 
     def _handle_RESETWORKER(self):
         self.inner_worker.terminate()
         time.sleep(1)
         self.setupWorker()
-        return True
+        return Commands.OK
 
     def _handle_CALL(self, *ids):
         # Work not queued, already working
@@ -126,10 +127,10 @@ class Worker(Process):
 
         self.log("Starting work!")
         self.startWork(inputIDs, outID)
-        return True
+        return Commands.OK
 
     def _handle_PING(self):
-        return b"pong"
+        return Commands.OK
 
     def _handle_DIE(self):
         self.log("Terminating inner worker process.")
