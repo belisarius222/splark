@@ -49,7 +49,7 @@ class WorkerConnection(AbstractSocketWrapper):
         assert type(worker_id) is bytes, worker_id
         assert cmd in Commands.items(), cmd
         for arg in args:
-            assert type(arg) is bytes, arg
+            assert isinstance(arg, bytes), arg
 
         return self.send_multipart((worker_id, b"", cmd) + args, **zmq_options)
 
