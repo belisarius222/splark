@@ -68,6 +68,21 @@ def test_master_getdata_setdata():
         assert recv_data == data, recv_data
 
 
+def test_master_setdata_deldata():
+    with MasterWithWorkers() as (master, workers):
+        data = list(range(10))
+        data_id = b"data"
+
+        master.set_data(data_id, data)
+        master.del_data(data_id)
+        try:
+            master.del_data(data_id)
+        except KeyError:
+            return
+        else:
+            raise RuntimeError("master.del_data() should have raised an exception.")
+
+
 @timed(1)
 def test_master_call():
     with MasterWithWorkers() as (master, workers):

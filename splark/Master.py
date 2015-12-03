@@ -81,6 +81,13 @@ class Master:
     def get_data(self, data_id):
         return self.transact_to_all_workers(Commands.GETDATA, itertools.repeat((data_id,)))
 
+    def del_data(self, data_id):
+        responses = self.transact_to_all_workers(Commands.DELDATA, itertools.repeat((data_id,)))
+        responses_are_true = [response is True for response in responses]
+        if not all(responses_are_true):
+            failed_worker_ids = [self.worker_ids[ix] for ix, ok in enumerate(responses_are_true)]
+            raise KeyError("Workers tried to delete nonexistent data: {}".format(failed_worker_ids))
+
     def call(self, func_id, ids, exit_id):
         cmd_tuple = (func_id,) + ids + (exit_id,)
         responses = self.transact_to_all_workers(Commands.CALL, itertools.repeat(cmd_tuple))
