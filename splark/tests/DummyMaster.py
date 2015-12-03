@@ -23,7 +23,7 @@ class DummyMaster:
     def get_data(self, idee):
         return self.data[idee]
 
-    def map(self, func_id, ids, exit_id):
+    def call(self, func_id, ids, exit_id):
         rdds = [self.data[idee] for idee in ids]
         zipped_RDD = list(zip(*rdds))
 
