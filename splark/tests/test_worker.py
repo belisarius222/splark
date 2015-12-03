@@ -41,10 +41,13 @@ class WorkerWithSocket:
         assert self.socket.poll(timeout, zmq.POLLIN), "Timeout waiting for response to: {}".format(args)
 
         worker_id, response = self.socket.recv_response(**kwargs)
-        assert worker_id == self.worker_id
+        assert worker_id == self.worker_id, worker_id
 
-        if expect is not None:
-            assert response == expect, "Invalid response from '{}' command. Expected: {} Actual: {}".format(args[0], expect, response)
+        err_msg = "Invalid response from '{}' command: {}".format(Commands.items()[cmd], response)
+        if expect is not None and callable(expect):
+            assert expect(response), err_msg
+        elif expect is not None:
+            assert response == expect, err_msg
         return response
 
 
@@ -100,10 +103,21 @@ def test_worker_set_call_get_data():
             time.sleep(0.1)
             assert type(isworking) == bool, "Malformed response from \"isworking\" command: {}".format(isworking)
 
-        listing = send_and_recv(Commands.LISTDATA)
-        assert set(listing) == {data_id, fun_id, map_output_id}, listing
-
+        send_and_recv(Commands.LISTDATA, expect=lambda d: set(d) == {data_id, fun_id, map_output_id})
         send_and_recv(Commands.GETDATA, map_output_id, expect=fun(data))
+
+
+@timed(1)
+def test_worker_del_data():
+    with WorkerWithSocket() as send_and_recv:
+        data = list(range(10))
+        data_pickle = toCP(data)
+        data_id = b"data1"
+        send_and_recv(Commands.SETDATA, data_id, data_pickle, expect=True)
+
+        send_and_recv(Commands.DELDATA, data_id, expect=True)
+        send_and_recv(Commands.DELDATA, data_id, expect=False)
+        send_and_recv(Commands.GETDATA, data_id, expect=lambda e: isinstance(e, Exception))
 
 
 @timed(1)

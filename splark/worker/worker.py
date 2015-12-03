@@ -88,8 +88,18 @@ class Worker(Process):
         self.data[id] = blob
         return True
 
+    def _handle_DELDATA(self, id):
+        try:
+            del self.data[id]
+            return True
+        except KeyError:
+            return False
+
     def _handle_GETDATA(self, id):
-        return self.data[id]
+        try:
+            return self.data[id]
+        except KeyError as e:
+            return e  # TAB TODO: better error reporting
 
     def _handle_LISTDATA(self):
         return list(self.data.keys())
