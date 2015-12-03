@@ -2,7 +2,7 @@ import itertools, time
 
 import zmq
 
-from splark.misc import toCP
+from splark.misc import toCP, fromCP
 from splark.protocol import Commands, WorkerConnection
 
 
@@ -63,7 +63,7 @@ class Master:
     def wait_for_workers_to_finish(self, refresh_timeout=200):
         while True:
             responses = self.transact_to_all_workers(Commands.ISWORKING)
-            if all(response is False for response in responses):
+            if all(response == Commands.FALSE for response in responses):
                 break
             time.sleep(refresh_timeout / 1000)
 
@@ -73,17 +73,17 @@ class Master:
 
         responses = self.transact_to_all_workers(Commands.SETDATA, cmd_tuple_iterator)
 
-        responses_are_true = [response is True for response in responses]
-        if not all(responses_are_true):
-            failed_worker_ids = [self.worker_ids[ix] for ix, ok in enumerate(responses_are_true) if not ok]
+        responses_are_ok = [response == Commands.OK for response in responses]
+        if not all(responses_are_ok):
+            failed_worker_ids = [self.worker_ids[ix] for ix, ok in enumerate(responses_are_ok) if not ok]
             raise ValueError("Workers {} failed 'setdata' command.".format(failed_worker_ids))
 
     def get_data(self, data_id):
-        return self.transact_to_all_workers(Commands.GETDATA, itertools.repeat((data_id,)))
+        return [fromCP(r) for r in self.transact_to_all_workers(Commands.GETDATA, itertools.repeat((data_id,)))]
 
     def del_data(self, data_id):
         responses = self.transact_to_all_workers(Commands.DELDATA, itertools.repeat((data_id,)))
-        responses_are_true = [response is True for response in responses]
+        responses_are_true = [response == Commands.TRUE for response in responses]
         if not all(responses_are_true):
             failed_worker_ids = [self.worker_ids[ix] for ix, ok in enumerate(responses_are_true)]
             raise KeyError("Workers tried to delete nonexistent data: {}".format(failed_worker_ids))
@@ -91,9 +91,9 @@ class Master:
     def call(self, func_id, ids, exit_id):
         cmd_tuple = (func_id,) + ids + (exit_id,)
         responses = self.transact_to_all_workers(Commands.CALL, itertools.repeat(cmd_tuple))
-        responses_are_true = [response is True for response in responses]
-        if not all(responses_are_true):
-            failed_worker_ids = [self.worker_ids[ix] for ix, ok in enumerate(responses_are_true) if not ok]
+        responses_are_ok = [response == Commands.OK for response in responses]
+        if not all(responses_are_ok):
+            failed_worker_ids = [self.worker_ids[ix] for ix, ok in enumerate(responses_are_ok) if not ok]
             raise ValueError("Workers {} failed 'map' command.".format(failed_worker_ids))
 
     def transact_to_all_workers(self, cmd, cmd_tuple_iterator=None, timeout=1000):
