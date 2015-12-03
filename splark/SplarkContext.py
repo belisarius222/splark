@@ -56,7 +56,7 @@ class ProcessWorkerContext:
         self.context = SplarkContext(master=self.master, num_workers=self.num_workers)
         print("Created context.")
 
-        return self.context, self.master, self.workers
+        return self.context, self.workers
 
     def __exit__(self, *args):
         if any(arg is not None for arg in args):
@@ -75,15 +75,3 @@ class ProcessWorkerContext:
         self.master.kill_workers()
         self.master.release_ports()
         print("Closed master sockets.", flush=True)
-
-# Iterators so context dosen't have bind collisions
-_workport = itertools.count(23456)
-_logport = itertools.count(34567)
-
-
-class TestingContext(ProcessWorkerContext):
-    def __init__(self, *args):
-        # Ignore the args
-        self.workport = next(_workport)
-        self.logport = next(_logport)
-        self.num_workers = 4

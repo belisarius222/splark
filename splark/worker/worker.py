@@ -5,6 +5,7 @@ from multiprocessing import Process, Pipe
 
 import zmq
 
+from splark.misc import toCP
 from splark.worker.inner import InnerWorker
 
 
@@ -48,7 +49,7 @@ class Worker(Process):
         self.master_socket.connect(self.endpoint + ":" + str(self.workport))
 
         # Send the initial worker ID to start a transaction going
-        self.master_socket.send_pyobj(b"connect")
+        self.master_socket.send(b"connect")
 
         # Setup async stdio/stderr
         self.stdsocket = self.ctx.socket(zmq.PUSH)
@@ -84,12 +85,12 @@ class Worker(Process):
     # All _handle_* functions map 1:1 with API calls
     # They all return a pyobject, which is the serialized
     # response to the call
-    def _handle_setdata(self, id, blob):
-        self.data[id] = blob
+    def _handle_setdata(self, idee, blob):
+        self.data[idee] = blob
         return True
 
-    def _handle_getdata(self, id):
-        return self.data[id]
+    def _handle_getdata(self, idee):
+        return self.data[idee]
 
     def _handle_listdata(self):
         return list(self.data.keys())
@@ -114,12 +115,12 @@ class Worker(Process):
         if any(idee not in self.data for idee in inputIDs):
             return False
 
-        self.log("Starting work!")
+        self.log("Starting work")
         self.startWork(inputIDs, outID)
         return True
 
     def _handle_ping(self):
-        return "pong"
+        return b"pong"
 
     def _handle_die(self):
         self.log("Terminating inner worker process.")
@@ -134,17 +135,16 @@ class Worker(Process):
         requestType = request[0].decode("ascii")
         args = tuple(request[1:])
 
+        self.log("Node Request: " + repr(request))
         # Get the handler for this request type
         fHandler = getattr(self, "_handle_" + requestType, None)
-        assert fHandler is not None, "No handler for request:" + requestType
+        assert fHandler is not None, "No handler for request:" + requestType + " " + repr(request)
 
         # Call the handler on the remaining arguments
         self.log("RECV \"{}\"".format(requestType))
         result = fHandler(*args)
-        if type(result) is bytes:
-            self.master_socket.send(result)
-        else:
-            self.master_socket.send_pyobj(result)
+        self.master_socket.send(toCP(result))
+        self.log("Response sent!")
 
     def startWork(self, inIDs, outID):
         assert not self.working
@@ -157,9 +157,11 @@ class Worker(Process):
         self.working = True
 
     def finishWork(self):
+        assert self.working
+
         # Return the work unit to the data pool with the above semaphores
         self.data[self.workingID] = self.inner_socket.recv()
-
+        self.log("Work done:" + self.workerID)
         # Clear the semaphors
         self.workingID = None
         self.working = False
@@ -186,13 +188,13 @@ class Worker(Process):
 
         while True:
             socks = dict(self.poller.poll())
-            # Look for incoming requests
-            if socks.get(self.master_socket) == zmq.POLLIN:
-                self.processRequest()
-
             # Finish work orders
             if socks.get(self.inner_socket) == zmq.POLLIN:
                 self.finishWork()
+
+            # Look for incoming requests
+            if socks.get(self.master_socket) == zmq.POLLIN:
+                self.processRequest()
 
             # Pipe inner worker's stdout and stderr to master
             if socks.get(self.inner_recv_pipe.fileno()) == zmq.POLLIN:

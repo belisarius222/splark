@@ -3,9 +3,7 @@ import itertools, sys, traceback
 from nose.tools import timed
 
 from splark import Master, Worker
-
-workport = itertools.count(23456)
-logport = itertools.count(33456)
+from splark.tests import getTestingWorkPort, getTestingLogPort
 
 
 class MasterWithWorkers:
@@ -13,8 +11,8 @@ class MasterWithWorkers:
         self.num_workers = num_workers
 
         # Increment the ports each time, so we don't hit the "address already in use" error.
-        self.workport = next(workport)
-        self.logport = next(logport)
+        self.workport = getTestingWorkPort()
+        self.logport = getTestingLogPort()
 
         self.master = Master(workport=self.workport, logport=self.logport)
 
@@ -50,14 +48,16 @@ class MasterWithWorkers:
         print("Closed master sockets.", flush=True)
 
 
+@timed(10)
 def test_master_wait_for_worker_connections():
     with MasterWithWorkers() as (master, workers):
         pass
 
 
+@timed(10)
 def test_master_getdata_setdata():
     with MasterWithWorkers() as (master, workers):
-        data = list(range(4))
+        data = tuple(range(4))
         data_id = b"data"
 
         print("Sending 'setdata'")
@@ -65,22 +65,22 @@ def test_master_getdata_setdata():
 
         print("Sending 'getdata'")
         recv_data = master.get_data(data_id)
-        assert recv_data == data, recv_data
+        assert recv_data == data, repr(recv_data) + " != " + repr(data)
 
 
-@timed(1)
+@timed(10)
 def test_master_map():
     with MasterWithWorkers() as (master, workers):
         data = [[0, 1], [2, 3], [4], [5]]
         data_id = b"data"
         master.set_data(data_id, data)
 
-        fun = lambda partition: [x + 1 for x in partition]
-        fun_id = b"fun"
-        master.set_data(fun_id, itertools.repeat(fun))
+        incrementFunc = lambda partition: [x + 1 for x in partition]
+        func_id = b"fun"
+        master.broadcast_datum(func_id, incrementFunc)
 
         output_id = b"output"
-        master.map(fun_id, (data_id,), output_id)
+        master.map(func_id, (data_id,), output_id)
         master.wait_for_workers_to_finish()
         recv_data = master.get_data(output_id)
-        assert recv_data == [fun(partition) for partition in data], recv_data
+        assert recv_data == [incrementFunc(partition) for partition in data], recv_data
